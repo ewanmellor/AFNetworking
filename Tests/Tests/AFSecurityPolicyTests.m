@@ -57,6 +57,20 @@ static SecTrustRef AFUTADNNetServerTrust() {
     return AFUTTrustChainForCertsInDirectory(serverCertDirectoryPath);
 }
 
+static SecTrustRef AFUTGoogleComServerTrustPath1() {
+    NSString *bundlePath = [[NSBundle bundleForClass:[AFSecurityPolicyTests class]] resourcePath];
+    NSString *serverCertDirectoryPath = [bundlePath stringByAppendingPathComponent:@"GoogleComServerTrustChainPath1"];
+    
+    return AFUTTrustChainForCertsInDirectory(serverCertDirectoryPath);
+}
+
+static SecTrustRef AFUTGoogleComServerTrustPath2() {
+    NSString *bundlePath = [[NSBundle bundleForClass:[AFSecurityPolicyTests class]] resourcePath];
+    NSString *serverCertDirectoryPath = [bundlePath stringByAppendingPathComponent:@"GoogleComServerTrustChainPath2"];
+
+    return AFUTTrustChainForCertsInDirectory(serverCertDirectoryPath);
+}
+
 static SecCertificateRef AFUTHTTPBinOrgCertificate() {
     NSString *certPath = [[NSBundle bundleForClass:[AFSecurityPolicyTests class]] pathForResource:@"httpbinorg_01162016" ofType:@"cer"];
     NSCAssert(certPath != nil, @"Path for certificate should not be nil");
@@ -89,6 +103,22 @@ static SecCertificateRef AFUTAddTrustExternalRootCertificate() {
     return SecCertificateCreateWithData(NULL, (__bridge CFDataRef)(certData));
 }
 
+static SecCertificateRef AFUTGoogleComEquifaxSecureCARootCertificate() {
+    NSString *certPath = [[NSBundle bundleForClass:[AFSecurityPolicyTests class]] pathForResource:@"Equifax_Secure_Certificate_Authority_Root" ofType:@"cer"];
+    NSCAssert(certPath != nil, @"Path for certificate should not be nil");
+    NSData *certData = [NSData dataWithContentsOfFile:certPath];
+    
+    return SecCertificateCreateWithData(NULL, (__bridge CFDataRef)(certData));
+}
+
+static SecCertificateRef AFUTGoogleComGeoTrustGlobalCARootCertificate() {
+    NSString *certPath = [[NSBundle bundleForClass:[AFSecurityPolicyTests class]] pathForResource:@"GeoTrust_Global_CA_Root" ofType:@"cer"];
+    NSCAssert(certPath != nil, @"Path for certificate should not be nil");
+    NSData *certData = [NSData dataWithContentsOfFile:certPath];
+    
+    return SecCertificateCreateWithData(NULL, (__bridge CFDataRef)(certData));
+}
+
 static SecCertificateRef AFUTSelfSignedCertificateWithoutDomain() {
     NSString *certPath = [[NSBundle bundleForClass:[AFSecurityPolicyTests class]] pathForResource:@"NoDomains" ofType:@"cer"];
     NSCAssert(certPath != nil, @"Path for certificate should not be nil");
@@ -111,18 +141,6 @@ static SecCertificateRef AFUTSelfSignedCertificateWithDNSNameDomain() {
     NSData *certData = [NSData dataWithContentsOfFile:certPath];
 
     return SecCertificateCreateWithData(NULL, (__bridge CFDataRef)(certData));
-}
-
-static NSArray * AFCertificateTrustChainForServerTrust(SecTrustRef serverTrust) {
-    CFIndex certificateCount = SecTrustGetCertificateCount(serverTrust);
-    NSMutableArray *trustChain = [NSMutableArray arrayWithCapacity:(NSUInteger)certificateCount];
-
-    for (CFIndex i = 0; i < certificateCount; i++) {
-        SecCertificateRef certificate = SecTrustGetCertificateAtIndex(serverTrust, i);
-        [trustChain addObject:(__bridge_transfer NSData *)SecCertificateCopyData(certificate)];
-    }
-
-    return [NSArray arrayWithArray:trustChain];
 }
 
 static SecTrustRef AFUTTrustWithCertificate(SecCertificateRef certificate) {
@@ -199,7 +217,8 @@ static SecTrustRef AFUTTrustWithCertificate(SecCertificateRef certificate) {
 }
 
 - (void)testPolicyWithPublicKeyPinningModeHasHTTPBinOrgPinnedCertificate {
-    AFSecurityPolicy *policy = [AFSecurityPolicy policyWithPinningMode:AFSSLPinningModePublicKey];
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    AFSecurityPolicy *policy = [AFSecurityPolicy policyWithPinningMode:AFSSLPinningModePublicKey withPinnedCertificates:[AFSecurityPolicy certificatesInBundle:bundle]];
 
     SecCertificateRef cert = AFUTHTTPBinOrgCertificate();
     NSData *certData = (__bridge NSData *)(SecCertificateCopyData(cert));
@@ -320,7 +339,8 @@ static SecTrustRef AFUTTrustWithCertificate(SecCertificateRef certificate) {
 }
 
 - (void)testPolicyWithCertificatePinningModeHasHTTPBinOrgPinnedCertificate {
-    AFSecurityPolicy *policy = [AFSecurityPolicy policyWithPinningMode:AFSSLPinningModeCertificate];
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    AFSecurityPolicy *policy = [AFSecurityPolicy policyWithPinningMode:AFSSLPinningModeCertificate withPinnedCertificates:[AFSecurityPolicy certificatesInBundle:bundle]];
 
     SecCertificateRef cert = AFUTHTTPBinOrgCertificate();
     NSData *certData = (__bridge NSData *)(SecCertificateCopyData(cert));
@@ -396,6 +416,36 @@ static SecTrustRef AFUTTrustWithCertificate(SecCertificateRef certificate) {
     SecCertificateRef certificate = AFUTHTTPBinOrgCertificate();
     policy.pinnedCertificates = @[ (__bridge_transfer id)SecCertificateCopyData(certificate)];
     XCTAssertTrue([policy evaluateServerTrust:AFUTHTTPBinOrgServerTrust() forDomain:@"httpbin.org"], @"Policy should allow server trust");
+}
+
+- (void)testPolicyWithCertificatePinningAllowsGoogleComServerTrustIncompleteChainWithRootCertificatePinnedAndValidDomainName {
+    // Fix certificate validation for servers providing incomplete chains (#3159) - test case
+    //
+    // google.com has two certification paths and both send incomplete certificate chains, i.e. don't include the Root CA
+    // (this can be validated in https://www.ssllabs.com/ssltest/analyze.html?d=google.com)
+    //
+    // The two certification paths are:
+    // - Path 1: *.google.com, Google Internet Authority G2 (with GeoTrust Global CA Root)
+    // - Path 2: *.google.com, Google Internet Authority G2, GeoTrust Global CA (cross signed) (with Equifax Secure CA Root)
+    //
+    // The common goal of using certificate pinning is to prevent MiTM (man-in-the-middle) attacks, so the Root CA's should be pinned to protect the entire chains.
+    // Since there's no Root CA being sent, when `-evaluateServerTrust:` invokes `AFCertificateTrustChainForServerTrust(serverTrust)`, the Root CA isn't present
+    // Therefore, even though `AFServerTrustIsValid(serverTrust)` succeeds, the next validation fails since no pinned certificate matches the `pinnedCertificates`.
+    // By fetching the `AFCertificateTrustChainForServerTrust(serverTrust)` *after* the `AFServerTrustIsValid(serverTrust)` validation, the complete chain is obtained and the Root CA's match.
+    
+    AFSecurityPolicy *policy = [AFSecurityPolicy policyWithPinningMode:AFSSLPinningModeCertificate];
+
+    // certification path 1
+    SecCertificateRef certificate = AFUTGoogleComGeoTrustGlobalCARootCertificate();
+    policy.pinnedCertificates = @[ (__bridge_transfer id)SecCertificateCopyData(certificate)];
+    
+    XCTAssertTrue([policy evaluateServerTrust:AFUTGoogleComServerTrustPath1() forDomain:@"google.com"], @"Policy should allow server trust");
+
+    // certification path 2
+    certificate = AFUTGoogleComEquifaxSecureCARootCertificate();
+    policy.pinnedCertificates = @[ (__bridge_transfer id)SecCertificateCopyData(certificate)];
+
+    XCTAssertTrue([policy evaluateServerTrust:AFUTGoogleComServerTrustPath2() forDomain:@"google.com"], @"Policy should allow server trust");
 }
 
 #pragma mark Negative Server Trust Evaluation Tests
@@ -496,7 +546,7 @@ static SecTrustRef AFUTTrustWithCertificate(SecCertificateRef certificate) {
     SecCertificateRef certificate = AFUTSelfSignedCertificateWithDNSNameDomain();
     SecTrustRef trust = AFUTTrustWithCertificate(certificate);
 
-    XCTAssertTrue([policy evaluateServerTrust:trust forDomain:nil], @"Policy should allow server trust because invalid certificaftes are allowed");
+    XCTAssertTrue([policy evaluateServerTrust:trust forDomain:nil], @"Policy should allow server trust because invalid certificates are allowed");
 }
 
 - (void)testThatPolicyWithInvalidCertificatesAllowedAndValidPinnedCertificatesDoesAllowSelfSignedServerTrustForValidDomainName {
@@ -506,7 +556,18 @@ static SecTrustRef AFUTTrustWithCertificate(SecCertificateRef certificate) {
     SecTrustRef trust = AFUTTrustWithCertificate(certificate);
     [policy setPinnedCertificates:@[(__bridge_transfer NSData *)SecCertificateCopyData(certificate)]];
 
-    XCTAssertTrue([policy evaluateServerTrust:trust forDomain:@"foobar.com"], @"Policy should allow server trust because invalid certificaftes are not allowed");
+    XCTAssertTrue([policy evaluateServerTrust:trust forDomain:@"foobar.com"], @"Policy should allow server trust because invalid certificates are allowed");
+}
+
+- (void)testThatPolicyWithInvalidCertificatesAllowedAndNoSSLPinningAndDomainNameValidationDisabledDoesAllowSelfSignedServerTrustForValidDomainName {
+    AFSecurityPolicy *policy = [AFSecurityPolicy policyWithPinningMode:AFSSLPinningModeNone];
+    [policy setAllowInvalidCertificates:YES];
+    [policy setValidatesDomainName:NO];
+
+    SecCertificateRef certificate = AFUTSelfSignedCertificateWithDNSNameDomain();
+    SecTrustRef trust = AFUTTrustWithCertificate(certificate);
+
+    XCTAssertTrue([policy evaluateServerTrust:trust forDomain:@"foobar.com"], @"Policy should allow server trust because invalid certificates are allowed");
 }
 
 #pragma mark Negative Test Cases
@@ -517,7 +578,7 @@ static SecTrustRef AFUTTrustWithCertificate(SecCertificateRef certificate) {
     SecCertificateRef certificate = AFUTSelfSignedCertificateWithDNSNameDomain();
     SecTrustRef trust = AFUTTrustWithCertificate(certificate);
 
-    XCTAssertFalse([policy evaluateServerTrust:trust forDomain:nil], @"Policy should not allow server trust because invalid certificaftes are not allowed");
+    XCTAssertFalse([policy evaluateServerTrust:trust forDomain:nil], @"Policy should not allow server trust because invalid certificates are not allowed");
 }
 
 - (void)testThatPolicyWithInvalidCertificatesAllowedAndNoPinnedCertificatesAndPublicKeyPinningModeDoesNotAllowSelfSignedServerTrustForValidDomainName {
@@ -527,7 +588,7 @@ static SecTrustRef AFUTTrustWithCertificate(SecCertificateRef certificate) {
     SecCertificateRef certificate = AFUTSelfSignedCertificateWithDNSNameDomain();
     SecTrustRef trust = AFUTTrustWithCertificate(certificate);
 
-    XCTAssertFalse([policy evaluateServerTrust:trust forDomain:@"foobar.com"], @"Policy should not allow server trust because invalid certificaftes are allowed but there are no pinned certificates");
+    XCTAssertFalse([policy evaluateServerTrust:trust forDomain:@"foobar.com"], @"Policy should not allow server trust because invalid certificates are allowed but there are no pinned certificates");
 }
 
 - (void)testThatPolicyWithInvalidCertificatesAllowedAndValidPinnedCertificatesAndNoPinningModeDoesNotAllowSelfSignedServerTrustForValidDomainName {
@@ -537,7 +598,54 @@ static SecTrustRef AFUTTrustWithCertificate(SecCertificateRef certificate) {
     SecTrustRef trust = AFUTTrustWithCertificate(certificate);
     [policy setPinnedCertificates:@[(__bridge_transfer NSData *)SecCertificateCopyData(certificate)]];
 
-    XCTAssertFalse([policy evaluateServerTrust:trust forDomain:@"foobar.com"], @"Policy should not allow server trust because invalid certificaftes are allowed but there are no pinned certificates");
+    XCTAssertFalse([policy evaluateServerTrust:trust forDomain:@"foobar.com"], @"Policy should not allow server trust because invalid certificates are allowed but there are no pinned certificates");
+}
+
+- (void)testThatPolicyWithInvalidCertificatesAllowedAndNoValidPinnedCertificatesAndNoPinningModeAndDomainValidationDoesNotAllowSelfSignedServerTrustForValidDomainName {
+    AFSecurityPolicy *policy = [AFSecurityPolicy policyWithPinningMode:AFSSLPinningModeNone];
+    [policy setAllowInvalidCertificates:YES];
+    [policy setPinnedCertificates:@[]];
+
+    SecCertificateRef certificate = AFUTSelfSignedCertificateWithDNSNameDomain();
+    SecTrustRef trust = AFUTTrustWithCertificate(certificate);
+
+    XCTAssertFalse([policy evaluateServerTrust:trust forDomain:@"foobar.com"], @"Policy should not allow server trust because invalid certificates are allowed but there are no pinned certificates");
+}
+
+#pragma mark - NSCopying
+- (void)testThatPolicyCanBeCopied {
+    AFSecurityPolicy *policy = [AFSecurityPolicy policyWithPinningMode:AFSSLPinningModeCertificate];
+    policy.allowInvalidCertificates = YES;
+    policy.validatesDomainName = NO;
+
+    AFSecurityPolicy *copiedPolicy = [policy copy];
+    XCTAssertNotEqual(copiedPolicy, policy);
+    XCTAssertEqual(copiedPolicy.allowInvalidCertificates, policy.allowInvalidCertificates);
+    XCTAssertEqual(copiedPolicy.validatesDomainName, policy.validatesDomainName);
+    XCTAssertEqual(copiedPolicy.SSLPinningMode, policy.SSLPinningMode);
+    XCTAssertNotEqual(copiedPolicy.pinnedCertificates, policy.pinnedCertificates);
+    XCTAssertTrue([copiedPolicy.pinnedCertificates isEqualToArray:policy.pinnedCertificates]);
+}
+
+- (void)testThatPolicyCanBeEncodedAndDecoded {
+    AFSecurityPolicy *policy = [AFSecurityPolicy policyWithPinningMode:AFSSLPinningModeCertificate];
+    policy.allowInvalidCertificates = YES;
+    policy.validatesDomainName = NO;
+
+    NSMutableData *archiveData = [NSMutableData new];
+    NSKeyedArchiver *archiver = [[NSKeyedArchiver alloc] initForWritingWithMutableData:archiveData];
+    [archiver encodeObject:policy forKey:@"policy"];
+    [archiver finishEncoding];
+
+    NSKeyedUnarchiver *unarchiver = [[NSKeyedUnarchiver alloc] initForReadingWithData:archiveData];
+    AFSecurityPolicy *unarchivedPolicy = [unarchiver decodeObjectOfClass:[AFSecurityPolicy class] forKey:@"policy"];
+
+    XCTAssertNotEqual(unarchivedPolicy, policy);
+    XCTAssertEqual(unarchivedPolicy.allowInvalidCertificates, policy.allowInvalidCertificates);
+    XCTAssertEqual(unarchivedPolicy.validatesDomainName, policy.validatesDomainName);
+    XCTAssertEqual(unarchivedPolicy.SSLPinningMode, policy.SSLPinningMode);
+    XCTAssertNotEqual(unarchivedPolicy.pinnedCertificates, policy.pinnedCertificates);
+    XCTAssertTrue([unarchivedPolicy.pinnedCertificates isEqualToArray:policy.pinnedCertificates]);
 }
 
 @end

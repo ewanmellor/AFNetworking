@@ -36,7 +36,8 @@
 - (void)setUp {
     [super setUp];
     self.localManager = [[AFURLSessionManager alloc] init];
-    
+    [self.localManager.session.configuration.URLCache removeAllCachedResponses];
+
     //Unfortunately, iOS 7 throws an exception when trying to create a background URL Session inside this test target, which means our tests here can only run on iOS 8+
     //Travis actually needs the try catch here. Just doing if ([NSURLSessionConfiguration respondsToSelector:@selector(backgroundSessionWithIdentifier)]) wasn't good enough.
     @try {
@@ -51,6 +52,7 @@
 
 - (void)tearDown {
     [super tearDown];
+    [self.localManager.session.configuration.URLCache removeAllCachedResponses];
     [self.localManager invalidateSessionCancelingTasks:YES];
     self.localManager = nil;
     
@@ -72,13 +74,12 @@
                         completionHandler:nil];
     [overallProgress resignCurrent];
 
-    expect(overallProgress.fractionCompleted).to.equal(0);
+    XCTAssertTrue(overallProgress.fractionCompleted == 0);
 
     uploadProgress.totalUnitCount = 1;
     uploadProgress.completedUnitCount = 1;
 
-
-    expect(overallProgress.fractionCompleted).to.equal(0.8);
+    XCTAssertTrue(overallProgress.fractionCompleted == 0.8);
 }
 
 - (void)testDownloadTasksProgressBecomesPartOfCurrentProgress {
@@ -93,13 +94,12 @@
                         completionHandler:nil];
     [overallProgress resignCurrent];
 
-    expect(overallProgress.fractionCompleted).to.equal(0);
+    XCTAssertTrue(overallProgress.fractionCompleted == 0.0);
 
     downloadProgress.totalUnitCount = 1;
     downloadProgress.completedUnitCount = 1;
 
-
-    expect(overallProgress.fractionCompleted).to.equal(0.8);
+    XCTAssertTrue(overallProgress.fractionCompleted == 0.8);
 }
 
 #pragma mark - Issue #2702 Tests
